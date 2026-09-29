@@ -26,7 +26,7 @@ MULTIPART_THRESHOLD = 32 * 1024 * 1024
 MULTIPART_CHUNK = 8 * 1024 * 1024
 
 # S3 服务端单次复制的对象上限，超过要改成分片复制（本工具不做）
-COPY_SIZE_LIMIT = 5 * 1024 ** 3
+COPY_SIZE_LIMIT = 5 * 1024**3
 
 # 客户端缓存：避免每次请求都重新加载服务模型（boto3 client 创建开销不小）
 _CLIENT_CACHE: dict[tuple, Any] = {}
@@ -198,8 +198,12 @@ class S3Adapter(StoreAdapter):
             except Exception as exc:  # noqa: BLE001
                 raise _explain(exc, "列出桶") from exc
             return [
-                Entry(name=str(b.get("Name")), path=str(b.get("Name")), is_dir=True,
-                      mtime=_fmt_time(b.get("CreationDate")))
+                Entry(
+                    name=str(b.get("Name")),
+                    path=str(b.get("Name")),
+                    is_dir=True,
+                    mtime=_fmt_time(b.get("CreationDate")),
+                )
                 for b in resp.get("Buckets", [])
             ]
 
@@ -214,25 +218,27 @@ class S3Adapter(StoreAdapter):
             for page in pages:
                 for item in page.get("CommonPrefixes", []):
                     full = str(item.get("Prefix", ""))
-                    name = full[len(prefix):].rstrip("/")
+                    name = full[len(prefix) :].rstrip("/")
                     if name:
                         entries.append(Entry(name=name, path=f"{bucket}/{full.rstrip('/')}", is_dir=True))
                 for item in page.get("Contents", []):
                     key = str(item.get("Key", ""))
                     if key == prefix or key.endswith("/") and len(key) == len(prefix):
                         continue  # 跳过目录占位对象
-                    name = key[len(prefix):]
+                    name = key[len(prefix) :]
                     if not name:
                         continue
-                    entries.append(Entry(
-                        name=name,
-                        path=f"{bucket}/{key}",
-                        is_dir=False,
-                        size=int(item.get("Size") or 0),
-                        mtime=_fmt_time(item.get("LastModified")),
-                        etag=str(item.get("ETag", "")).strip('"') or None,
-                        storage_class=item.get("StorageClass"),
-                    ))
+                    entries.append(
+                        Entry(
+                            name=name,
+                            path=f"{bucket}/{key}",
+                            is_dir=False,
+                            size=int(item.get("Size") or 0),
+                            mtime=_fmt_time(item.get("LastModified")),
+                            etag=str(item.get("ETag", "")).strip('"') or None,
+                            storage_class=item.get("StorageClass"),
+                        )
+                    )
         except Exception as exc:  # noqa: BLE001
             raise _explain(exc, "列出目录内容") from exc
 
@@ -324,7 +330,7 @@ class S3Adapter(StoreAdapter):
             return 0
 
         for key, size in items:
-            self._copy_object(client, src_bucket, key, dest_bucket, dest_prefix + key[len(src_prefix):], size)
+            self._copy_object(client, src_bucket, key, dest_bucket, dest_prefix + key[len(src_prefix) :], size)
         return len(items)
 
     @staticmethod
@@ -380,7 +386,7 @@ class S3Adapter(StoreAdapter):
 
         return iterator(), (int(total) if total is not None else None)
 
-    def upload(self, path: str, stream: BinaryIO, size: int | None) -> None:
+    def upload(self, path: str, stream: BinaryIO, size: int | None, progress=None) -> None:
         client = _client(self.conn)
         bucket, key = _split(path)
         if not key:
@@ -388,17 +394,19 @@ class S3Adapter(StoreAdapter):
 
         try:
             if size is not None and size > MULTIPART_THRESHOLD:
-                self._upload_large(client, bucket, key, stream, size)
+                self._upload_large(client, bucket, key, stream, size, progress)
             else:
                 payload = stream.read() if size is None else stream.read(size)
                 client.put_object(Bucket=bucket, Key=key, Body=payload)
+                if progress and payload:
+                    progress(len(payload))
         except StoreError:
             raise
         except Exception as exc:  # noqa: BLE001
             raise _explain(exc, "上传") from exc
 
     @staticmethod
-    def _upload_large(client, bucket: str, key: str, stream: BinaryIO, size: int) -> None:
+    def _upload_large(client, bucket: str, key: str, stream: BinaryIO, size: int, progress=None) -> None:
         """大文件落临时文件后走分片上传，避免内存被打满。"""
         tmp_path = None
         try:
@@ -416,12 +424,15 @@ class S3Adapter(StoreAdapter):
 
             with open(tmp_path, "rb") as fh:
                 client.upload_fileobj(
-                    fh, bucket, key,
+                    fh,
+                    bucket,
+                    key,
                     Config=TransferConfig(
                         multipart_threshold=MULTIPART_THRESHOLD,
                         multipart_chunksize=MULTIPART_CHUNK,
                         max_concurrency=4,
                     ),
+                    Callback=progress,
                 )
         finally:
             if tmp_path and os.path.exists(tmp_path):

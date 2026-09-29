@@ -343,6 +343,41 @@ button, input { font-family: inherit; font-size: inherit; }
   font-size: 11px;
   gap: 12px;
 }
+.statusbar-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.upload-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
+}
+.upload-progress[hidden] { display: none; }
+.upload-progress-text {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.upload-progress-track {
+  flex: 0 0 180px;
+  width: 180px;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.upload-progress-bar {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width .12s linear;
+}
 
 /* ---------------- 弹窗 ---------------- */
 .modal-mask {

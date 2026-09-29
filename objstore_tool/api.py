@@ -8,11 +8,15 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, BinaryIO, Iterator
 
-from . import __version__, config as cfg
+from . import __version__
+from . import config as cfg
 from .adapters import StoreAdapter, StoreError, build_adapter
 from .adapters.base import join_path
 
@@ -259,11 +263,136 @@ def presign(conn_id: str, path: str, expires: int = 3600) -> dict[str, Any]:
     return {"url": adapter.presign(path, expires), "expires": expires}
 
 
-def upload(conn_id: str, path: str, stream: BinaryIO, size: int | None) -> dict[str, Any]:
+# --------------------------------------------------------------------------- #
+# 上传进度任务（内存态，供前端轮询）
+# --------------------------------------------------------------------------- #
+class UploadTask:
+    """一条上传批次的内存态进度任务。
+
+    ThreadingHTTPServer 下「跑上传的线程」与「被轮询的线程」不是同一个，
+    所有字段变更都走锁；任务只存在内存里、短期保留，不落盘。
+    """
+
+    __slots__ = (
+        "task_id",
+        "label",
+        "stage",
+        "files_total",
+        "files_done",
+        "current_file",
+        "total_bytes",
+        "transferred",
+        "error",
+        "_lock",
+        "_updated_at",
+    )
+
+    def __init__(self, task_id: str, label: str = ""):
+        self.task_id = task_id
+        self.label = label
+        self.stage = "pending"
+        self.files_total = 0
+        self.files_done = 0
+        self.current_file = ""
+        self.total_bytes = 0
+        self.transferred = 0
+        self.error = ""
+        self._lock = threading.Lock()
+        self._updated_at = time.time()
+
+    def set(self, **changes: Any) -> None:
+        with self._lock:
+            for key, value in changes.items():
+                setattr(self, key, value)
+            self._updated_at = time.time()
+
+    def add_bytes(self, amount: int) -> None:
+        """追加一段已传输字节（适配器进度回调按增量调它）。"""
+        with self._lock:
+            self.transferred += amount
+            self._updated_at = time.time()
+
+    def file_done(self) -> None:
+        with self._lock:
+            self.files_done += 1
+            self._updated_at = time.time()
+
+    def to_dict(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "task_id": self.task_id,
+                "label": self.label,
+                "stage": self.stage,
+                "files_total": self.files_total,
+                "files_done": self.files_done,
+                "current_file": self.current_file,
+                "total_bytes": self.total_bytes,
+                "transferred": self.transferred,
+                "percent": round(self.transferred / self.total_bytes * 100, 1) if self.total_bytes else 0,
+                "error": self.error,
+            }
+
+
+_TASKS: dict[str, UploadTask] = {}
+_TASKS_LOCK = threading.Lock()
+_TASK_TTL = 300.0  # 结束 5 分钟后清理，前端早就不轮询了
+
+
+def new_task(task_id: str = "", label: str = "") -> UploadTask:
+    """注册一条任务；task_id 为空时生成一个。"""
+    tid = task_id or uuid.uuid4().hex
+    task = UploadTask(tid, label)
+    with _TASKS_LOCK:
+        _TASKS[tid] = task
+    return task
+
+
+def get_task(task_id: str) -> UploadTask | None:
+    with _TASKS_LOCK:
+        return _TASKS.get(task_id)
+
+
+def finish_task(task_id: str, error: str = "") -> None:
+    task = get_task(task_id)
+    if task:
+        task.set(stage="error" if error else "done", error=error)
+        _prune_tasks()
+
+
+def task_snapshot(task_id: str) -> dict[str, Any]:
+    task = get_task(task_id)
+    if task is None:
+        raise ApiError("上传任务不存在", status=404)
+    return {"task": task.to_dict()}
+
+
+def _prune_tasks() -> None:
+    """清理早已结束的任务，防止内存无限增长。"""
+    now = time.time()
+    with _TASKS_LOCK:
+        for tid in [
+            t for t, task in _TASKS.items() if task.stage in ("done", "error") and now - task._updated_at > _TASK_TTL
+        ]:
+            del _TASKS[tid]
+
+
+def upload(conn_id: str, path: str, stream: BinaryIO, size: int | None, task_id: str = "") -> dict[str, Any]:
     if not path:
         raise ApiError("缺少上传目标路径")
     adapter = _adapter(conn_id)
-    adapter.upload(path, stream, size)
+    task = get_task(task_id) if task_id else None
+    if task:
+        name = path.rstrip("/").rsplit("/", 1)[-1] or path
+        task.set(
+            stage="upload",
+            current_file=name,
+            files_total=1,
+            files_done=0,
+            total_bytes=size or 0,
+            transferred=0,
+            error="",
+        )
+    adapter.upload(path, stream, size, task.add_bytes if task else None)
     return {"message": f"已上传到 {path}", "path": path}
 
 
@@ -295,13 +424,15 @@ def local_list(path: str) -> dict[str, Any]:
             except OSError:
                 continue  # 无权限 / 被占用的条目直接跳过
             is_dir = child.is_dir()
-            entries.append({
-                "name": child.name,
-                "path": str(child),
-                "is_dir": is_dir,
-                "size": None if is_dir else stat.st_size,
-                "mtime": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="minutes"),
-            })
+            entries.append(
+                {
+                    "name": child.name,
+                    "path": str(child),
+                    "is_dir": is_dir,
+                    "size": None if is_dir else stat.st_size,
+                    "mtime": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="minutes"),
+                }
+            )
     except ApiError:
         raise
     except OSError as exc:
@@ -348,17 +479,23 @@ def local_upload(dir_path: str, name: str, stream: BinaryIO) -> dict[str, Any]:
     return {"message": f"已保存到 {target}", "path": str(target)}
 
 
-def _push_local_file(adapter: StoreAdapter, src: Path, dest: str) -> None:
-    """把一个本地文件写进远端；大文件由适配层自己分片。"""
+def _push_local_file(adapter: StoreAdapter, src: Path, dest: str, task: UploadTask | None = None) -> None:
+    """把一个本地文件写进远端；大文件由适配层自己分片。
+
+    task 非空时上报字节进度，并在成功后把已完成文件数 +1。
+    """
     try:
         size = src.stat().st_size
         with src.open("rb") as fh:
-            adapter.upload(dest, fh, size)
+            adapter.upload(dest, fh, size, task.add_bytes if task else None)
     except OSError as exc:
         raise ApiError(f"读取本地文件失败：{src}", detail=str(exc)) from exc
+    else:
+        if task:
+            task.file_done()
 
 
-def _push_local_dir(adapter: StoreAdapter, src: Path, dest_dir: str) -> int:
+def _push_local_dir(adapter: StoreAdapter, src: Path, dest_dir: str, task: UploadTask | None = None) -> int:
     """递归把本地目录推到远端 dest_dir 下（源作为同名子项进去），返回上传的文件数。"""
 
     def on_error(exc: OSError) -> None:
@@ -377,16 +514,49 @@ def _push_local_dir(adapter: StoreAdapter, src: Path, dest_dir: str) -> int:
             adapter.mkdir(base)  # 逐层建子目录（HDFS 不会替我们建父目录）
             made.add(base)
         for name in sorted(files):
-            _push_local_file(adapter, here / name, join_path(base, name))
+            if task:
+                task.set(current_file=str(here / name))
+            _push_local_file(adapter, here / name, join_path(base, name), task)
             count += 1
     return count
 
 
-def push_local(conn_id: str, sources: list[dict[str, Any]], dest_dir: str) -> dict[str, Any]:
+def _scan_push_sizes(items: list[tuple[str, bool]]) -> tuple[int, int]:
+    """预扫本地文件 / 目录：返回 (文件数, 总字节数)，作为进度分母。
+
+    与正式上传循环独立，统计不到就当 0 处理，不影响上传本身。
+    """
+    files_total = 0
+    total_bytes = 0
+    for raw, is_dir in items:
+        src = Path(raw)
+        if is_dir or src.is_dir():
+            if not src.is_dir():
+                continue  # 具体校验留给正式上传循环
+            for current, _dirs, names in os.walk(src):
+                for name in names:
+                    try:
+                        total_bytes += (Path(current) / name).stat().st_size
+                    except OSError:
+                        pass
+                    files_total += 1
+        elif src.is_file():
+            files_total += 1
+            try:
+                total_bytes += src.stat().st_size
+            except OSError:
+                pass
+    return files_total, total_bytes
+
+
+def push_local(
+    conn_id: str, sources: list[dict[str, Any]], dest_dir: str, task_id: str = "", label: str = ""
+) -> dict[str, Any]:
     """把本地文件 / 目录推到远端目录下（目录递归）。
 
     与 ``copy`` / ``move`` 语义一致：``dest_dir`` 是远端父目录，源以同名子项落进去。
     数据由服务端直接读本地磁盘写进存储，不经过浏览器中转。
+    ``task_id`` 非空时先预扫形成进度分母，再逐文件上报当前进度。
     """
     if not str(dest_dir or "").strip():
         raise ApiError("请先在左侧进入某个桶 / 目录再上传")
@@ -395,18 +565,34 @@ def push_local(conn_id: str, sources: list[dict[str, Any]], dest_dir: str) -> di
     if not items:
         raise ApiError("请先选择要上传的本地文件 / 目录")
 
+    task = get_task(task_id) if task_id else None
+    if task:
+        task.set(stage="scan", label=label or "")
+        files_total, total_bytes = _scan_push_sizes(items)
+        task.set(
+            stage="upload",
+            files_total=files_total,
+            total_bytes=total_bytes,
+            files_done=0,
+            transferred=0,
+            current_file="",
+            error="",
+        )
+
     adapter = _adapter(conn_id)
     count = 0
     for raw, is_dir in items:
         src = Path(raw)
+        if task:
+            task.set(current_file=src.name)
         if is_dir or src.is_dir():
             if not src.is_dir():
                 raise ApiError(f"目录不存在：{src}")
-            count += _push_local_dir(adapter, src, dest_dir)
+            count += _push_local_dir(adapter, src, dest_dir, task)
         else:
             if not src.is_file():
                 raise ApiError(f"文件不存在：{src}")
-            _push_local_file(adapter, src, join_path(dest_dir, src.name))
+            _push_local_file(adapter, src, join_path(dest_dir, src.name), task)
             count += 1
 
     message = f"已上传 {count} 个文件到 {dest_dir}" if count else "已创建目录（没有文件）"

@@ -23,7 +23,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from objstore_tool import api, config as cfg  # noqa: E402
+from objstore_tool import api  # noqa: E402
+from objstore_tool import config as cfg
 from objstore_tool.adapters import build_adapter  # noqa: E402
 
 NOW_MS = 1758000000000
@@ -62,9 +63,9 @@ class MockNameNode(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
         path = urllib.parse.unquote(parsed.path)
         if path.startswith("/datanode"):
-            return True, path[len("/datanode"):], query
+            return True, path[len("/datanode") :], query
         if path.startswith("/webhdfs/v1"):
-            return False, path[len("/webhdfs/v1"):] or "/", query
+            return False, path[len("/webhdfs/v1") :] or "/", query
         return False, path, query
 
     @staticmethod
@@ -144,14 +145,19 @@ class MockNameNode(BaseHTTPRequestHandler):
         info = FS.get(target)
         if info is None:
             return self._remote_error(404, "FileNotFoundException", target)
-        return self._json(200, {"FileStatus": {
-            "type": info["type"],
-            "length": info["length"],
-            "modificationTime": info["modificationTime"],
-            "permission": "755" if info["type"] == "DIRECTORY" else "644",
-            "owner": "hdfs",
-            "group": "supergroup",
-        }})
+        return self._json(
+            200,
+            {
+                "FileStatus": {
+                    "type": info["type"],
+                    "length": info["length"],
+                    "modificationTime": info["modificationTime"],
+                    "permission": "755" if info["type"] == "DIRECTORY" else "644",
+                    "owner": "hdfs",
+                    "group": "supergroup",
+                }
+            },
+        )
 
     def _liststatus(self, path: str):
         target = self._norm(path)
@@ -167,17 +173,19 @@ class MockNameNode(BaseHTTPRequestHandler):
             suffix = key[base_len:]
             if not suffix or "/" in suffix:
                 continue
-            items.append({
-                "pathSuffix": suffix,
-                "type": info["type"],
-                "length": info["length"],
-                "modificationTime": info["modificationTime"],
-                "permission": "755" if info["type"] == "DIRECTORY" else "644",
-                "owner": "hdfs",
-                "group": "supergroup",
-                "replication": 0,
-                "blockSize": 0,
-            })
+            items.append(
+                {
+                    "pathSuffix": suffix,
+                    "type": info["type"],
+                    "length": info["length"],
+                    "modificationTime": info["modificationTime"],
+                    "permission": "755" if info["type"] == "DIRECTORY" else "644",
+                    "owner": "hdfs",
+                    "group": "supergroup",
+                    "replication": 0,
+                    "blockSize": 0,
+                }
+            )
         return self._json(200, {"FileStatuses": {"FileStatus": items}})
 
     def _open(self, path: str, query: dict):
@@ -190,7 +198,7 @@ class MockNameNode(BaseHTTPRequestHandler):
         offset = int((query.get("offset") or ["0"])[0] or 0)
         length_raw = query.get("length")
         if length_raw:
-            data = data[offset: offset + int(length_raw[0])]
+            data = data[offset : offset + int(length_raw[0])]
         elif offset:
             data = data[offset:]
 
@@ -211,11 +219,16 @@ class MockNameNode(BaseHTTPRequestHandler):
 
     def _remote_error(self, status: int, exception: str, message: str):
         cls = f"org.apache.hadoop.hdfs.protocol.{exception}"
-        self._json(status, {"RemoteException": {
-            "exception": cls,
-            "javaClassName": cls,
-            "message": message,
-        }})
+        self._json(
+            status,
+            {
+                "RemoteException": {
+                    "exception": cls,
+                    "javaClassName": cls,
+                    "message": message,
+                }
+            },
+        )
 
 
 def start_mock() -> tuple[ThreadingHTTPServer, str]:
@@ -267,8 +280,7 @@ def main() -> int:
         warehouse = adapter.list("/user/hdfs/warehouse/ods")
         check("ods 下 2 个文件", len(warehouse) == 2, str([e.name for e in warehouse]))
         csv = next(e for e in warehouse if e.name == "t1.csv")
-        check("文件 size 正确",
-              csv.size == len(FS["/user/hdfs/warehouse/ods/t1.csv"]["content"]), str(csv.size))
+        check("文件 size 正确", csv.size == len(FS["/user/hdfs/warehouse/ods/t1.csv"]["content"]), str(csv.size))
         check("路径拼接正确", csv.path == "/user/hdfs/warehouse/ods/t1.csv", csv.path)
 
         st = adapter.stat("/user/hdfs/warehouse/ods")
@@ -283,10 +295,12 @@ def main() -> int:
         payload = "你好，HDFS\n第二行\n".encode("utf-8")
         adapter.upload("/user/hdfs/warehouse/上传测试.txt", io.BytesIO(payload), len(payload))
         stored = FS.get("/user/hdfs/warehouse/上传测试.txt")
-        check("两段式写入成功", stored is not None and stored["content"] == payload,
-              f"{len(stored['content']) if stored else 0}B")
-        check("上传后出现在列表中",
-              "上传测试.txt" in [e.name for e in adapter.list("/user/hdfs/warehouse")])
+        check(
+            "两段式写入成功",
+            stored is not None and stored["content"] == payload,
+            f"{len(stored['content']) if stored else 0}B",
+        )
+        check("上传后出现在列表中", "上传测试.txt" in [e.name for e in adapter.list("/user/hdfs/warehouse")])
 
         print("\n[下载 / 预览]")
         stream, size = adapter.open_read("/user/hdfs/warehouse/上传测试.txt")
@@ -336,15 +350,47 @@ def main() -> int:
         check("空目录也建出来", FS.get("/user/hdfs/warehouse/pushed/empty", {}).get("type") == "DIRECTORY")
         check("推送内容一致", FS["/user/hdfs/warehouse/pushed/sub/b.txt"]["content"] == b"BB")
         check("返回上传文件数", data.get("files") == 2, str(data.get("files")))
+        print("\n[上传进度任务]")
+        progress_log = []
+        adapter.upload("/user/hdfs/warehouse/进度回调.txt", io.BytesIO(payload), len(payload), progress_log.append)
+        check(
+            "HDFS 分块进度增量上报且总额正确",
+            sum(progress_log) == len(payload) and all(n > 0 for n in progress_log),
+            str(progress_log),
+        )
 
+        task = api.new_task("HDFS 上传进度")
+        api.upload(
+            "selftest-hdfs",
+            "/user/hdfs/warehouse/进度任务.txt",
+            io.BytesIO(payload),
+            len(payload),
+            task_id=task.task_id,
+        )
+        snap = api.task_snapshot(task.task_id)["task"]
+        check("HDFS 上传任务字节到位", snap["transferred"] == len(payload), f"{snap['transferred']}/{len(payload)}")
+        api.finish_task(task.task_id)
+
+        task2 = api.new_task("HDFS 推送进度")
+        api.push_local(
+            "selftest-hdfs",
+            [{"path": str(local_src), "is_dir": True}],
+            "/user/hdfs/warehouse/pushed2",
+            task_id=task2.task_id,
+        )
+        snap = api.task_snapshot(task2.task_id)["task"]
+        check("HDFS 推送预扫文件数", snap["files_total"] == 2, str(snap["files_total"]))
+        check(
+            "HDFS 推送字节到位",
+            snap["transferred"] == snap["total_bytes"] == 3,
+            f"{snap['transferred']}/{snap['total_bytes']}",
+        )
+        api.finish_task(task2.task_id)
         print("\n[远端目录拉到本地]")
         back = local_root / "back"
         back.mkdir()
         data = api.pull_local("selftest-hdfs", [{"path": "/user/hdfs/warehouse/pushed", "is_dir": True}], str(back))
-        got = {
-            p.relative_to(back).as_posix(): p.read_bytes()
-            for p in back.rglob("*") if p.is_file()
-        }
+        got = {p.relative_to(back).as_posix(): p.read_bytes() for p in back.rglob("*") if p.is_file()}
         check("HDFS 目录拉到本地", got == {"pushed/a.txt": b"A", "pushed/sub/b.txt": b"BB"}, str(sorted(got)))
         check("空目录也建出来", (back / "pushed" / "empty").is_dir())
         check("返回下载文件数", data.get("files") == 2, str(data.get("files")))

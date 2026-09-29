@@ -20,7 +20,7 @@ from typing import Any, BinaryIO, Iterator
 from urllib.parse import quote, urlencode, urlsplit
 
 from . import register
-from .base import Entry, StoreAdapter, StoreError, guess_preview_kind, join_path
+from .base import Entry, ProgressReader, StoreAdapter, StoreError, guess_preview_kind, join_path
 
 WEBHDFS_PREFIX = "/webhdfs/v1"
 CONNECT_TIMEOUT = 15
@@ -96,8 +96,15 @@ class _WebHDFSClient:
         encoded = urlencode(query)
         return f"{self.endpoint.base_path}{WEBHDFS_PREFIX}{_encode_path(path)}?{encoded}"
 
-    def _open(self, method: str, path: str, op: str, params: dict[str, Any] | None = None,
-              body: Any = None, headers: dict[str, str] | None = None) -> tuple[http.client.HTTPResponse, http.client.HTTPConnection]:
+    def _open(
+        self,
+        method: str,
+        path: str,
+        op: str,
+        params: dict[str, Any] | None = None,
+        body: Any = None,
+        headers: dict[str, str] | None = None,
+    ) -> tuple[http.client.HTTPResponse, http.client.HTTPConnection]:
         conn = self.endpoint.connect()
         try:
             conn.request(method, self._url(path, op, params), body=body, headers=headers or {})
@@ -119,8 +126,9 @@ class _WebHDFSClient:
         hint = _EXCEPTION_HINTS.get(name, name or f"HTTP {status}")
         raise StoreError(f"{action}失败：{hint}", message or None)
 
-    def call(self, method: str, path: str, op: str, params: dict[str, Any] | None = None,
-             action: str = "操作") -> dict[str, Any]:
+    def call(
+        self, method: str, path: str, op: str, params: dict[str, Any] | None = None, action: str = "操作"
+    ) -> dict[str, Any]:
         if method == "GET":
             resp, conn = self._open(method, path, op, params)
         else:
@@ -159,15 +167,17 @@ class _WebHDFSClient:
             if not name:
                 continue
             is_dir = str(item.get("type") or "").upper() == "DIRECTORY"
-            entries.append(Entry(
-                name=name,
-                path=f"{base}/{name}" or f"/{name}",
-                is_dir=is_dir,
-                size=None if is_dir else int(item.get("length") or 0),
-                mtime=_fmt_mtime(item.get("modificationTime")),
-                etag=None,
-                storage_class=str(item.get("permission") or "") or None,
-            ))
+            entries.append(
+                Entry(
+                    name=name,
+                    path=f"{base}/{name}" or f"/{name}",
+                    is_dir=is_dir,
+                    size=None if is_dir else int(item.get("length") or 0),
+                    mtime=_fmt_mtime(item.get("modificationTime")),
+                    etag=None,
+                    storage_class=str(item.get("permission") or "") or None,
+                )
+            )
         entries.sort(key=lambda e: (not e.is_dir, e.name.lower()))
         return entries
 
@@ -229,10 +239,12 @@ class _WebHDFSClient:
 
         return iterator(), total
 
-    def upload(self, path: str, stream: BinaryIO, size: int | None) -> None:
+    def upload(self, path: str, stream: BinaryIO, size: int | None, progress=None) -> None:
         # 第一段：向 NameNode 申请写入位置
         resp, conn = self._open(
-            "PUT", path, "CREATE",
+            "PUT",
+            path,
+            "CREATE",
             params={"overwrite": True},
             body=b"",
             headers={"Content-Length": "0"},
@@ -264,7 +276,8 @@ class _WebHDFSClient:
             headers = {"Content-Type": "application/octet-stream"}
             if size is not None:
                 headers["Content-Length"] = str(size)
-            conn2.request("PUT", target.path + (f"?{target.query}" if target.query else ""), body=stream, headers=headers)
+            body = ProgressReader(stream, progress) if progress else stream
+            conn2.request("PUT", target.path + (f"?{target.query}" if target.query else ""), body=body, headers=headers)
             resp2 = conn2.getresponse()
             payload = resp2.read()
             if resp2.status >= 400:
@@ -319,8 +332,8 @@ class WebHDFSAdapter(StoreAdapter):
     def open_read(self, path: str, start: int | None = None, length: int | None = None):
         return self._client().open_read(path, start, length)
 
-    def upload(self, path: str, stream: BinaryIO, size: int | None) -> None:
-        self._client().upload(path, stream, size)
+    def upload(self, path: str, stream: BinaryIO, size: int | None, progress=None) -> None:
+        self._client().upload(path, stream, size, progress)
 
     def move(self, src: str, dest_dir: str, is_dir: bool) -> int:
         """HDFS 原生 RENAME：目录与文件都是一次调用，且不搬数据。

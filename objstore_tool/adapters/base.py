@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import tempfile
 from dataclasses import asdict, dataclass
-from typing import Any, BinaryIO, Iterator
+from typing import Any, BinaryIO, Callable, Iterator
 
 
 class StoreError(Exception):
@@ -29,6 +29,23 @@ class StoreError(Exception):
         if self.detail:
             payload["detail"] = self.detail
         return payload
+
+
+class ProgressReader:
+    """只读流包装：按已读字节数增量上报进度（适配器向远端传数据时用它计数）。"""
+
+    def __init__(self, stream: BinaryIO, on_bytes: Callable[[int], None]):
+        self._stream = stream
+        self._on_bytes = on_bytes
+
+    def read(self, amt: int = -1) -> bytes:
+        data = self._stream.read(amt)
+        if data:
+            self._on_bytes(len(data))
+        return data
+
+    def __getattr__(self, name: str):
+        return getattr(self._stream, name)
 
 
 @dataclass
@@ -50,10 +67,42 @@ class Entry:
 # 预览类型判定：放在基类里，S3 与 WebHDFS 共用同一套规则
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".avif"}
 TEXT_EXTS = {
-    ".txt", ".log", ".csv", ".tsv", ".json", ".jsonl", ".ndjson", ".xml", ".yaml", ".yml",
-    ".sql", ".md", ".ini", ".conf", ".cfg", ".properties", ".env", ".sh", ".bat", ".ps1",
-    ".py", ".js", ".ts", ".java", ".scala", ".go", ".rs", ".c", ".h", ".cpp", ".r", ".toml",
-    ".html", ".htm", ".css", ".gitignore",
+    ".txt",
+    ".log",
+    ".csv",
+    ".tsv",
+    ".json",
+    ".jsonl",
+    ".ndjson",
+    ".xml",
+    ".yaml",
+    ".yml",
+    ".sql",
+    ".md",
+    ".ini",
+    ".conf",
+    ".cfg",
+    ".properties",
+    ".env",
+    ".sh",
+    ".bat",
+    ".ps1",
+    ".py",
+    ".js",
+    ".ts",
+    ".java",
+    ".scala",
+    ".go",
+    ".rs",
+    ".c",
+    ".h",
+    ".cpp",
+    ".r",
+    ".toml",
+    ".html",
+    ".htm",
+    ".css",
+    ".gitignore",
 }
 
 
@@ -112,11 +161,19 @@ class StoreAdapter:
         """删除，返回删除的对象数量。"""
         raise NotImplementedError
 
-    def open_read(self, path: str, start: int | None = None, length: int | None = None) -> tuple[Iterator[bytes], int | None]:
+    def open_read(
+        self, path: str, start: int | None = None, length: int | None = None
+    ) -> tuple[Iterator[bytes], int | None]:
         """返回 (字节流迭代器, 总长度)。start/length 用于 Range 预览。"""
         raise NotImplementedError
 
-    def upload(self, path: str, stream: BinaryIO, size: int | None) -> None:
+    def upload(
+        self,
+        path: str,
+        stream: BinaryIO,
+        size: int | None,
+        progress: Callable[[int], None] | None = None,
+    ) -> None:
         raise NotImplementedError
 
     def presign(self, path: str, expires: int = 3600) -> str:

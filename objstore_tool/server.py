@@ -21,7 +21,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from . import __version__, api, config as cfg
+from . import __version__, api
+from . import config as cfg
 from .adapters import StoreError
 
 DEFAULT_PORT = 8765
@@ -93,7 +94,7 @@ class ObjStoreHandler(BaseHTTPRequestHandler):
 
         try:
             if route.startswith("/api/"):
-                self._handle_api(method, route[len("/api/"):], query)
+                self._handle_api(method, route[len("/api/") :], query)
             elif method == "GET":
                 self._serve_static(route)
             else:
@@ -132,6 +133,8 @@ class ObjStoreHandler(BaseHTTPRequestHandler):
                 return self._stream_object(query, inline=True)
             if name == "favorites":
                 return self._send_json(api.get_favorites())
+            if name == "tasks":
+                return self._send_json(api.task_snapshot(_q1(query, "id") or ""))
             if name == "config/export":
                 return self._export_config()
 
@@ -147,35 +150,56 @@ class ObjStoreHandler(BaseHTTPRequestHandler):
                 return self._send_json(api.mkdir(str(body.get("conn") or ""), str(body.get("path") or "")))
             if name == "delete":
                 body = self._read_json()
-                return self._send_json(api.delete(
-                    str(body.get("conn") or ""),
-                    str(body.get("path") or ""),
-                    bool(body.get("is_dir")),
-                ))
+                return self._send_json(
+                    api.delete(
+                        str(body.get("conn") or ""),
+                        str(body.get("path") or ""),
+                        bool(body.get("is_dir")),
+                    )
+                )
             if name in ("copy", "move"):
                 body = self._read_json()
                 action = api.move if name == "move" else api.copy
-                return self._send_json(action(
-                    str(body.get("conn") or ""),
-                    body.get("sources") or [],
-                    str(body.get("dest") or ""),
-                ))
+                return self._send_json(
+                    action(
+                        str(body.get("conn") or ""),
+                        body.get("sources") or [],
+                        str(body.get("dest") or ""),
+                    )
+                )
             if name in ("local/push", "local/pull"):
                 body = self._read_json()
-                action = api.pull_local if name.endswith("pull") else api.push_local
-                return self._send_json(action(
-                    str(body.get("conn") or ""),
-                    body.get("sources") or [],
-                    str(body.get("dest_dir") or ""),
-                ))
+                conn_id = str(body.get("conn") or "")
+                sources = body.get("sources") or []
+                dest = str(body.get("dest_dir") or "")
+                if name.endswith("pull"):
+                    return self._send_json(api.pull_local(conn_id, sources, dest))
+                # 推送是服务端单请求跑完全程，前端看不到分步进度；
+                # 前端带 task_id 进来，跑完把终态写进任务供轮询收尾。
+                task_id = str(body.get("task_id") or "")
+                task = api.get_task(task_id) if task_id else None
+                if task is None and task_id:
+                    task = api.new_task(task_id, "本地上传")
+                try:
+                    result = api.push_local(conn_id, sources, dest, task_id=task_id)
+                    if task:
+                        api.finish_task(task_id)
+                except Exception as exc:
+                    if task:
+                        api.finish_task(task_id, getattr(exc, "message", "") or str(exc))
+                    raise
+                result["task_id"] = task_id
+                return self._send_json(result)
             if name == "favorites":
                 return self._send_json(api.save_favorites(self._read_json()))
             if name == "config/import":
                 payload = self._read_json()
-                return self._send_json(api.import_backup(
-                    str(payload.get("content") or ""),
-                    bool(payload.get("merge", True)),
-                ))
+                return self._send_json(
+                    api.import_backup(
+                        str(payload.get("content") or ""),
+                        bool(payload.get("merge", True)),
+                    )
+                )
             if name == "shutdown":
                 return self._shutdown()
 
@@ -192,13 +216,23 @@ class ObjStoreHandler(BaseHTTPRequestHandler):
         size_header = self.headers.get("Content-Length")
         size = int(size_header) if size_header and size_header.isdigit() else None
         path = _q1(query, "path") or ""
+        # 前端带 task_id 进来则记录「服务端 → 存储」这段的真实进度；
+        # 浏览器到本机服务这段由前端 XHR 自己统计，不重复计。
+        task_id = _q1(query, "task") or ""
+        task = api.get_task(task_id) if task_id else None
+        if task is None and task_id:
+            task = api.new_task(task_id, "上传")
         # 有 Content-Length 就套一层，便于出错时判断 body 读没读完（见 _abandon_body）
         body = _BodyReader(self.rfile, size) if size is not None else self.rfile
         try:
-            result = api.upload(_q1(query, "conn") or "", path, body, size)
-        except Exception:
+            result = api.upload(_q1(query, "conn") or "", path, body, size, task_id=task_id)
+        except Exception as exc:
             self._abandon_body(body)
+            if task:
+                api.finish_task(task_id, getattr(exc, "message", "") or str(exc))
             raise
+        if task:
+            api.finish_task(task_id)
         self._send_json(result)
 
     def _receive_local_upload(self, query: dict[str, list[str]]) -> None:

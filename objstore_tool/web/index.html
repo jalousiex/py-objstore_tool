@@ -117,7 +117,13 @@
 
     </div>
 
-    <div class="statusbar" id="statusbar">就绪</div>
+    <div class="statusbar">
+      <span id="statusbar" class="statusbar-text">就绪</span>
+      <div id="upload-progress" class="upload-progress" hidden>
+        <span id="upload-progress-text" class="upload-progress-text"></span>
+        <div class="upload-progress-track"><div id="upload-progress-bar" class="upload-progress-bar"></div></div>
+      </div>
+    </div>
   </section>
 
 </main>

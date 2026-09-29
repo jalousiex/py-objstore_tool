@@ -20,7 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from objstore_tool import api, config as cfg  # noqa: E402
+from objstore_tool import api  # noqa: E402
+from objstore_tool import config as cfg
 from objstore_tool.adapters import build_adapter  # noqa: E402
 
 NS = "http://s3.amazonaws.com/doc/2006-03-01/"
@@ -138,9 +139,7 @@ class MockS3(BaseHTTPRequestHandler):
             # 按提交进来的 Key 逐个删（跟真实 S3 一致），早先「清空整桶」太糊弄
             keys = re.findall(r"<Key>(.*?)</Key>", raw.decode("utf-8", errors="replace"))
             removed = [k for k in keys if STORE.get(bucket, {}).pop(k, None) is not None]
-            body = "<DeleteResult>" + "".join(
-                f"<Deleted><Key>{k}</Key></Deleted>" for k in removed
-            ) + "</DeleteResult>"
+            body = "<DeleteResult>" + "".join(f"<Deleted><Key>{k}</Key></Deleted>" for k in removed) + "</DeleteResult>"
             return self._send_xml(body)
 
         self._error(400, "NotImplemented")
@@ -148,12 +147,11 @@ class MockS3(BaseHTTPRequestHandler):
     # ---- 各动作 ----
     def _list_buckets(self):
         items = "".join(
-            f"<Bucket><Name>{name}</Name>"
-            f"<CreationDate>2026-09-01T00:00:00.000Z</CreationDate></Bucket>"
+            f"<Bucket><Name>{name}</Name><CreationDate>2026-09-01T00:00:00.000Z</CreationDate></Bucket>"
             for name in STORE
         )
         self._send_xml(
-            f"<ListAllMyBucketsResult xmlns=\"{NS}\">"
+            f'<ListAllMyBucketsResult xmlns="{NS}">'
             f"<Owner><ID>mock</ID><DisplayName>mock</DisplayName></Owner>"
             f"<Buckets>{items}</Buckets></ListAllMyBucketsResult>"
         )
@@ -168,7 +166,7 @@ class MockS3(BaseHTTPRequestHandler):
         for key in keys:
             if not key.startswith(prefix):
                 continue
-            rest = key[len(prefix):]
+            rest = key[len(prefix) :]
             if delimiter and delimiter in rest:
                 common.add(prefix + rest.split(delimiter)[0] + delimiter)
                 continue
@@ -181,7 +179,7 @@ class MockS3(BaseHTTPRequestHandler):
 
         prefix_xml = "".join(f"<CommonPrefixes><Prefix>{p}</Prefix></CommonPrefixes>" for p in sorted(common))
         self._send_xml(
-            f"<ListBucketResult xmlns=\"{NS}\">"
+            f'<ListBucketResult xmlns="{NS}">'
             f"<Name>{bucket}</Name><Prefix>{prefix}</Prefix><Delimiter>{delimiter}</Delimiter>"
             f"<MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated>"
             f"{''.join(contents)}{prefix_xml}</ListBucketResult>"
@@ -345,8 +343,9 @@ def main() -> int:
         check("api 声明支持预签名", data["supports_presign"] is True)
 
         meta = api.get_meta()
-        check("连接类型含 use_proxy 字段",
-              any(f["key"] == "use_proxy" for f in meta["connection_types"]["s3"]["fields"]))
+        check(
+            "连接类型含 use_proxy 字段", any(f["key"] == "use_proxy" for f in meta["connection_types"]["s3"]["fields"])
+        )
 
         try:
             api.copy("selftest-s3", [{"path": "demo/moved", "is_dir": True}], "demo/moved/inner")
@@ -373,12 +372,49 @@ def main() -> int:
 
         api.push_local(
             "selftest-s3",
-            [{"path": str(local_src / "a.txt"), "is_dir": False},
-             {"path": str(local_src / "sub" / "b.txt"), "is_dir": False}],
+            [
+                {"path": str(local_src / "a.txt"), "is_dir": False},
+                {"path": str(local_src / "sub" / "b.txt"), "is_dir": False},
+            ],
             "demo/multi",
         )
         check("多选一次推多个文件", "multi/a.txt" in STORE["demo"] and "multi/b.txt" in STORE["demo"])
 
+        print("\n[上传进度任务]")
+        # 适配器层：小对象也要把整段字节报出来
+        progress_log = []
+        adapter.upload("demo/进度回调.txt", io.BytesIO(payload), len(payload), progress_log.append)
+        check(
+            "适配器进度回调增量上报且总额正确",
+            sum(progress_log) == len(payload) and all(n > 0 for n in progress_log),
+            str(progress_log),
+        )
+
+        task = api.new_task("上传进度断言")
+        api.upload("selftest-s3", "demo/进度任务.txt", io.BytesIO(payload), len(payload), task_id=task.task_id)
+        snap = api.task_snapshot(task.task_id)["task"]
+        check("上传任务记录字节进度", snap["transferred"] == len(payload), f"{snap['transferred']}/{len(payload)}")
+        check("上传任务当前文件写对", snap["current_file"] == "进度任务.txt", snap["current_file"])
+        api.finish_task(task.task_id)
+        check("上传任务可标记完成", api.task_snapshot(task.task_id)["task"]["stage"] == "done")
+
+        task2 = api.new_task("推送进度断言")
+        api.push_local(
+            "selftest-s3",
+            [{"path": str(local_src), "is_dir": True}],
+            "demo/progress",
+            task_id=task2.task_id,
+            label="进度",
+        )
+        snap = api.task_snapshot(task2.task_id)["task"]
+        check("推送预扫文件数正确", snap["files_total"] == 3, str(snap["files_total"]))
+        check("推送文件进度数完", snap["files_done"] == 3, f"{snap['files_done']}/{snap['files_total']}")
+        check(
+            "推送字节进度到位",
+            snap["transferred"] == snap["total_bytes"] == 6,
+            f"{snap['transferred']}/{snap['total_bytes']}",
+        )
+        api.finish_task(task2.task_id)
         try:
             api.push_local("selftest-s3", [{"path": str(local_root / "不存在"), "is_dir": True}], "demo")
             check("本地路径不存在被挡下", False)
@@ -395,10 +431,7 @@ def main() -> int:
         back = local_root / "back"
         back.mkdir()
         data = api.pull_local("selftest-s3", [{"path": "demo/pushed", "is_dir": True}], str(back))
-        got = {
-            p.relative_to(back).as_posix(): p.read_bytes()
-            for p in back.rglob("*") if p.is_file()
-        }
+        got = {p.relative_to(back).as_posix(): p.read_bytes() for p in back.rglob("*") if p.is_file()}
         want = {
             "pushed/a.txt": b"A",
             "pushed/sub/b.txt": b"BB",
@@ -418,11 +451,12 @@ def main() -> int:
             check("本地目标不存在被挡下", "本地目录不存在" in str(exc.message), exc.message)
 
         print("\n[收藏夹（存配置文件）]")
-        api.save_favorites({
-            "remote": {"selftest-s3": [{"name": "demo", "path": "demo"},
-                                       {"name": "logs", "path": "demo/logs"}]},
-            "local": [{"name": "temp", "path": str(local_root)}],
-        })
+        api.save_favorites(
+            {
+                "remote": {"selftest-s3": [{"name": "demo", "path": "demo"}, {"name": "logs", "path": "demo/logs"}]},
+                "local": [{"name": "temp", "path": str(local_root)}],
+            }
+        )
         favs = api.get_favorites()["favorites"]
         check("收藏夹写读一致", favs["remote"]["selftest-s3"][1]["path"] == "demo/logs", str(favs))
         check("本地收藏也在", favs["local"][0]["path"] == str(local_root), str(favs))

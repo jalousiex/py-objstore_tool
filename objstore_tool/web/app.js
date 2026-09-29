@@ -266,6 +266,59 @@ function setStatus(text) {
   $('#statusbar').textContent = text;
 }
 
+/* ---- 上传批次进度：状态栏进度条，上传期间不再盖全屏遮罩 ---- */
+const uploadUi = { timer: null };
+
+function setUpload(percent, text) {
+  $('#upload-progress').hidden = false;
+  $('#upload-progress-bar').style.width = `${Math.max(0, Math.min(100, percent))}%`;
+  const el = $('#upload-progress-text');
+  el.textContent = text || '';
+  el.title = text || '';
+}
+
+function hideUpload() {
+  if (uploadUi.timer) { clearInterval(uploadUi.timer); uploadUi.timer = null; }
+  $('#upload-progress').hidden = true;
+  $('#upload-progress-bar').style.width = '0%';
+  $('#upload-progress-text').textContent = '';
+  $('#upload-progress-text').title = '';
+}
+
+function makeTaskId() {
+  return (window.crypto && typeof crypto.randomUUID === 'function')
+    ? crypto.randomUUID()
+    : `t-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/* 任务快照 → 进度条；返回 true 表示任务已结束 */
+function renderTask(task) {
+  if (task.stage === 'scan') { setUpload(0, '正在扫描本地文件…'); return false; }
+  if (task.stage === 'done') { setUpload(100, '完成'); return true; }
+  if (task.stage === 'error') { setUpload(0, `失败：${task.error || '未知错误'}`); return true; }
+  let pct = 0;
+  if (task.total_bytes) pct = (task.transferred / task.total_bytes) * 100;
+  else if (task.files_total) pct = (task.files_done / task.files_total) * 100;
+  const part = task.files_total ? `${task.files_done}/${task.files_total} 个文件` : '';
+  const cur = task.current_file ? basenameOf(task.current_file) : '';
+  setUpload(pct, [part, cur ? `正在上传 ${cur}` : ''].filter(Boolean).join(' · '));
+  return false;
+}
+
+/* 轮询服务端任务直到 done / error */
+function pollTask(taskId) {
+  if (uploadUi.timer) clearInterval(uploadUi.timer);
+  uploadUi.timer = setInterval(async () => {
+    try {
+      const data = await apiGet('/api/tasks', { id: taskId });
+      if (renderTask(data.task)) {
+        clearInterval(uploadUi.timer);
+        uploadUi.timer = null;
+      }
+    } catch { /* 任务还没注册或瞬时失败，等下轮 */ }
+  }, 250);
+}
+
 function fmtSize(bytes) {
   if (bytes === null || bytes === undefined) return '—';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -1116,7 +1169,7 @@ async function runUploads(files) {
   setStatus('就绪');
 }
 
-function uploadOne(file, target, displayName) {
+function uploadOne(file, target, displayName, onProgress) {
   const label = displayName || file.name || target;
   return new Promise((resolve, reject) => {
     const url = new URL('/api/upload', location.origin);
@@ -1126,9 +1179,10 @@ function uploadOne(file, target, displayName) {
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', url.toString());
     xhr.upload.addEventListener('progress', (ev) => {
-      if (ev.lengthComputable) {
-        setStatus(`上传 ${label}：${Math.round((ev.loaded / ev.total) * 100)}%`);
-      }
+      if (!ev.lengthComputable) return;
+      const pct = ev.total ? ev.loaded / ev.total : 1; // 空文件 0/0 不产生 NaN
+      if (onProgress) onProgress(pct);
+      else setStatus(`上传 ${label}：${Math.round(pct * 100)}%`);
     });
     xhr.addEventListener('load', () => {
       if (xhr.status >= 200 && xhr.status < 300) return resolve();
@@ -1183,19 +1237,22 @@ async function walkEntry(entry, prefix, files, dirs) {
 
 /* 资源管理器的文件 / 文件夹 → 远端当前目录 */
 async function uploadDropped(dt) {
+  setUpload(0, '正在读取拖入的文件…');
   const { files, dirs } = await collectDropped(dt);
-  if (!files.length && !dirs.length) return;
+  if (!files.length && !dirs.length) { hideUpload(); return; }
   if (!state.activeId || state.path === state.rootPath) {
+    hideUpload();
     toast('请先进入某个桶 / 目录再上传', 'fail');
     return;
   }
 
   const failed = [];
   let ok = 0;
-  setLoading(true);
+  const totalBytes = files.reduce((sum, f) => sum + (f.file.size || 0), 0);
+  let doneBytes = 0;
   try {
     for (let i = 0; i < dirs.length; i += 1) {
-      setStatus(`新建目录 ${i + 1}/${dirs.length}：${dirs[i]}`);
+      setUpload(totalBytes ? (doneBytes / totalBytes) * 100 : 0, `创建目录 ${i + 1}/${dirs.length}：${basenameOf(dirs[i])}`);
       try {
         await apiPost('/api/mkdir', { conn: state.activeId, path: joinPath(state.path, dirs[i]) });
       } catch (err) {
@@ -1203,19 +1260,26 @@ async function uploadDropped(dt) {
       }
     }
     for (let i = 0; i < files.length; i += 1) {
-      setStatus(`上传中 ${i + 1}/${files.length}：${files[i].rel}`);
+      const item = files[i];
+      const file = item.file;
+      const size = file.size || 0;
       try {
-        await uploadOne(files[i].file, joinPath(state.path, files[i].rel), files[i].rel);
+        await uploadOne(file, joinPath(state.path, item.rel), item.rel, (pct) => {
+          const done = doneBytes + (size ? size * pct : 0);
+          const overall = totalBytes ? (done / totalBytes) * 100 : ((i + pct) / files.length) * 100;
+          setUpload(overall, `正在上传 ${i + 1}/${files.length}：${item.rel} ${Math.round(pct * 100)}%`);
+        });
+        doneBytes += size;
         ok += 1;
       } catch (err) {
-        failed.push(`${files[i].rel}（${err.message}）`);
+        failed.push(`${item.rel}（${err.message}）`);
       }
     }
     await browse(state.path);
     if (ok) toast(`已上传 ${ok} 个文件${dirs.length ? ` + ${dirs.length} 个目录` : ''}`, 'ok');
     if (failed.length) toast(`有 ${failed.length} 项失败`, 'fail', failed.join('\n'));
   } finally {
-    setLoading(false);
+    hideUpload();
     setStatus('就绪');
   }
 }
@@ -1407,13 +1471,15 @@ async function pushLocalToRemote(items) {
   }
 
   const label = list.length === 1 ? list[0].name : `${list.length} 项`;
-  setLoading(true);
-  setStatus(`上传 ${label} …`);
+  const taskId = makeTaskId();
+  setUpload(0, `准备上传 ${label} …`);
+  pollTask(taskId);
   try {
     const data = await apiPost('/api/local/push', {
       conn: state.activeId,
       sources: list.map((it) => ({ path: it.path, is_dir: Boolean(it.is_dir) })),
       dest_dir: state.path,
+      task_id: taskId,
     });
     await browse(state.path); // browse 里会清掉远端勾选
     toast(data.message || `已上传 ${label}`, 'ok');
@@ -1421,7 +1487,7 @@ async function pushLocalToRemote(items) {
     toast('上传失败', 'fail', err.message + (err.detail ? ` — ${err.detail}` : ''));
     setStatus('就绪');
   } finally {
-    setLoading(false);
+    hideUpload();
   }
 }
 
