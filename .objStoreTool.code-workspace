@@ -1,0 +1,47 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"debug.allowBreakpointsEverywhere": true,
+		"debug.console.acceptSuggestionOnEnter": "on",
+		"debug.console.collapseIdenticalLines": false,
+		"python.debugging.autoReload": true
+	},
+	"launch": {
+		"version": "0.2.0",
+		"configurations": [
+			{
+				"name": "Python: 当前文件",
+				"type": "debugpy",
+				"request": "launch",
+				"program": "${file}",
+				"console": "integratedTerminal"
+			},
+			{
+				"name": "Python: 带参数当前文件",
+				"type": "debugpy",
+				"request": "launch",
+				"program": "${file}",
+				"console": "integratedTerminal",
+				"args": "${command:pickArgs}"
+			},
+			{
+				"name": "Python: 带GIT路径tst当前文件",
+				"type": "debugpy",
+				"request": "launch",
+				"program": "${file}",
+				"console": "integratedTerminal",
+				"args": [
+					"-r",
+					"C:/_GitRoot/dw",
+					"-e",
+					"tst",
+					"-f",
+				]
+			}
+		],
+	},
+}

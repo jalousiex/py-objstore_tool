@@ -1,0 +1,93 @@
+version = 1
+revision = 3
+requires-python = "==3.11.*"
+
+[[package]]
+name = "boto3"
+version = "1.43.95"
+source = { registry = "https://nexus.hengrui.com/repository/pypi-proxy/simple" }
+dependencies = [
+    { name = "botocore" },
+    { name = "jmespath" },
+    { name = "s3transfer" },
+]
+sdist = { url = "https://nexus.hengrui.com/repository/pypi-proxy/packages/boto3/1.43.95/boto3-1.43.95.tar.gz", hash = "sha256:9d71f299111e1f4e8c28f573a1b7c0555fe40d2147fe9bef852a02bd57cbde60" }
+wheels = [
+    { url = "https://nexus.hengrui.com/repository/pypi-proxy/packages/boto3/1.43.95/boto3-1.43.95-py3-none-any.whl", hash = "sha256:c906921c4f9ab41e9587af6586f072c8f2be6979e8bde2ec26aa443bb1745019" },
+]
+
+[[package]]
+name = "botocore"
+version = "1.43.95"
+source = { registry = "https://nexus.hengrui.com/repository/pypi-proxy/simple" }
+dependencies = [
+    { name = "jmespath" },
+    { name = "python-dateutil" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://nexus.hengrui.com/repository/pypi-proxy/packages/botocore/1.43.95/botocore-1.43.95.tar.gz", hash = "sha256:779588da32bd48a7bb0c097da4bcb747260e86d2bfc507369dca56f1450e0722" }
+wheels = [
+    { url = "https://nexus.hengrui.com/repository/pypi-proxy/packages/botocore/1.43.95/botocore-1.43.95-py3-none-any.whl", hash = "sha256:0fda26d16c7c7bf7082c421390a817b696f98a43d3da7c43dbbb093f76662876" },
+]
+
+[[package]]
+name = "jmespath"
+version = "1.1.0"
+source = { registry = "https://nexus.hengrui.com/repository/pypi-proxy/simple" }
+sdist = { url = "https://nexus.hengrui.com/repository/pypi-proxy/packages/jmespath/1.1.0/jmespath-1.1.0.tar.gz", hash = "sha256:472c87d80f36026ae83c6ddd0f1d05d4e510134ed462851fd5f754c8c3cbb88d" }
+wheels = [
+    { url = "https://nexus.hengrui.com/repository/pypi-proxy/packages/jmespath/1.1.0/jmespath-1.1.0-py3-none-any.whl", hash = "sha256:a5663118de4908c91729bea0acadca56526eb2698e83de10cd116ae0f4e97c64" },
+]
+
+[[package]]
+name = "objstore-tool"
+version = "1.0.0"
+source = { editable = "." }
+dependencies = [
+    { name = "boto3" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "boto3", specifier = ">=1.35.0" }]
+
+[[package]]
+name = "python-dateutil"
+version = "2.9.0.post0"
+source = { registry = "https://nexus.hengrui.com/repository/pypi-proxy/simple" }
+dependencies = [
+    { name = "six" },
+]
+sdist = { url = "https://nexus.hengrui.com/repository/pypi-proxy/packages/python-dateutil/2.9.0.post0/python-dateutil-2.9.0.post0.tar.gz", hash = "sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3" }
+wheels = [
+    { url = "https://nexus.hengrui.com/repository/pypi-proxy/packages/python-dateutil/2.9.0.post0/python_dateutil-2.9.0.post0-py2.py3-none-any.whl", hash = "sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427" },
+]
+
+[[package]]
+name = "s3transfer"
+version = "0.19.2"
+source = { registry = "https://nexus.hengrui.com/repository/pypi-proxy/simple" }
+dependencies = [
+    { name = "botocore" },
+]
+sdist = { url = "https://nexus.hengrui.com/repository/pypi-proxy/packages/s3transfer/0.19.2/s3transfer-0.19.2.tar.gz", hash = "sha256:ba0309fd86be3c27dbf78cdd813c13c5e1df16e5874b99d2535ebbdfb9892993" }
+wheels = [
+    { url = "https://nexus.hengrui.com/repository/pypi-proxy/packages/s3transfer/0.19.2/s3transfer-0.19.2-py3-none-any.whl", hash = "sha256:d8168eccca828cbb2cd573675333f3bddd254313a9c42494b84c76b539e8ba25" },
+]
+
+[[package]]
+name = "six"
+version = "1.17.0"
+source = { registry = "https://nexus.hengrui.com/repository/pypi-proxy/simple" }
+sdist = { url = "https://nexus.hengrui.com/repository/pypi-proxy/packages/six/1.17.0/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81" }
+wheels = [
+    { url = "https://nexus.hengrui.com/repository/pypi-proxy/packages/six/1.17.0/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274" },
+]
+
+[[package]]
+name = "urllib3"
+version = "2.8.0"
+source = { registry = "https://nexus.hengrui.com/repository/pypi-proxy/simple" }
+sdist = { url = "https://nexus.hengrui.com/repository/pypi-proxy/packages/urllib3/2.8.0/urllib3-2.8.0.tar.gz", hash = "sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63" }
+wheels = [
+    { url = "https://nexus.hengrui.com/repository/pypi-proxy/packages/urllib3/2.8.0/urllib3-2.8.0-py3-none-any.whl", hash = "sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3" },
+]

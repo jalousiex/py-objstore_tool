@@ -1,0 +1,27 @@
+[project]
+name = "objstore_tool"
+version = "1.0.0"
+description = "本地对象存储管理工具：S3 兼容（MinIO / OSS / COS / AWS）与 WebHDFS"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "boto3>=1.35.0",
+]
+
+[project.scripts]
+objstore_tool = "objstore_tool.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["objstore_tool"]
+
+[tool.uv]
+package = true
+
+# 打包才需要 PyInstaller。刻意不放进依赖组：uv 的 dev 组是默认组，
+# uv run / uv sync 都会装上，与「日常环境保持轻量」冲突。
+# 打包时按需注入即可，不进项目环境：
+#     uv run --with pyinstaller python build.py

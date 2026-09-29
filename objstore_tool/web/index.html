@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>objstore_tool</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-main">
+    <button id="btn-sidebar" class="icon-btn" title="收起连接栏">«</button>
+    <div class="brand">
+      <span class="brand-mark">🛶</span>
+      <span class="brand-name">objstore_tool</span>
+      <span class="brand-version" id="app-version"></span>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <button id="btn-export" class="btn btn-ghost" title="把配置导出成 JSON 文件">导出备份</button>
+    <button id="btn-import" class="btn btn-ghost" title="从 JSON 文件导入配置">导入备份</button>
+    <button id="btn-shutdown" class="btn btn-ghost btn-danger" title="停止本地服务">退出服务</button>
+  </div>
+</header>
+
+<main class="layout">
+
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <span class="sidebar-title">连接</span>
+      <button id="btn-new-conn" class="icon-btn" title="新建连接">＋</button>
+    </div>
+    <ul id="conn-list" class="conn-list"></ul>
+    <div class="sidebar-foot">
+      <div class="sidebar-foot-label">配置文件</div>
+      <div class="sidebar-foot-path" id="config-path">—</div>
+      <div class="sidebar-foot-hint">拷走该文件即完成备份</div>
+    </div>
+  </aside>
+
+  <div id="sidebar-splitter" class="pane-splitter sidebar-splitter" title="拖动调整连接栏宽度"></div>
+
+  <section class="content">
+    <div class="panes">
+
+      <div class="pane pane-remote">
+        <div class="toolbar">
+          <nav id="breadcrumb" class="path-bar"></nav>
+          <div class="toolbar-actions">
+            <select id="fav-select" class="fav-select" title="收藏的桶 / 目录，选中即跳转"></select>
+            <button id="btn-fav-toggle" class="icon-btn" title="收藏当前目录" disabled>☆</button>
+            <input id="filter-input" class="filter-input" type="search" placeholder="过滤…" autocomplete="off">
+            <span id="sel-count" class="sel-count" hidden></span>
+            <button id="btn-copy" class="icon-btn" disabled title="把勾选的目录 / 文件复制到目标目录">⧉</button>
+            <button id="btn-move" class="icon-btn" disabled title="把勾选的目录 / 文件移动到目标目录">➜</button>
+            <button id="btn-delete" class="icon-btn icon-btn-danger" disabled title="删除勾选的目录 / 文件">🗑</button>
+            <button id="btn-mkdir" class="icon-btn" disabled title="在当前目录下新建目录">&#x1F5C0;</button>
+            <button id="btn-upload" class="icon-btn icon-btn-primary" disabled title="上传文件到当前目录">↑</button>
+            <button id="btn-refresh" class="icon-btn" disabled title="刷新当前目录">↻</button>
+          </div>
+        </div>
+
+        <div class="table-wrap" id="table-wrap">
+          <table class="file-table">
+            <thead>
+              <tr>
+                <th class="col-check"><input type="checkbox" id="check-all" title="全选 / 取消（只作用于当前显示的条目）"></th>
+                <th class="col-name sortable" data-sort="name">名称</th>
+                <th class="col-size sortable" data-sort="size">大小</th>
+                <th class="col-time sortable" data-sort="mtime">修改时间</th>
+                <th class="col-actions">操作</th>
+              </tr>
+            </thead>
+            <tbody id="file-tbody"></tbody>
+          </table>
+          <div id="empty-state" class="empty-state">
+            <div class="empty-icon">🛶</div>
+            <div class="empty-text">从左侧选择一个连接开始浏览</div>
+          </div>
+          <div id="drop-overlay" class="drop-overlay">松开鼠标，上传到当前目录</div>
+        </div>
+      </div>
+
+      <div id="pane-splitter" class="pane-splitter" title="拖动调整本地目录栏宽度"></div>
+
+      <div class="pane pane-local">
+        <div class="toolbar">
+          <nav id="local-path" class="path-bar"></nav>
+          <div class="toolbar-actions">
+            <select id="local-fav-select" class="fav-select" title="收藏的本地目录，选中即打开"></select>
+            <button id="btn-local-fav" class="icon-btn" title="收藏当前目录" disabled>☆</button>
+            <button id="btn-local-up" class="icon-btn" title="上一级" disabled>↑</button>
+            <span id="local-sel-count" class="sel-count" hidden></span>
+          </div>
+        </div>
+
+        <div class="table-wrap" id="local-wrap">
+          <table class="file-table">
+            <thead>
+              <tr>
+                <th class="col-check"><input type="checkbox" id="local-check-all" title="全选 / 取消（只作用于当前显示的条目）"></th>
+                <th class="col-name">名称</th>
+                <th class="col-size">大小</th>
+                <th class="col-time">修改时间</th>
+              </tr>
+            </thead>
+            <tbody id="local-tbody"></tbody>
+          </table>
+          <div id="local-empty" class="empty-state">
+            <div class="empty-icon">📂</div>
+            <div class="empty-text">输入本地目录路径后开始浏览；<br>文件 / 目录都可拖到左侧远端上传（勾选后可一次拖多项），<br>远端文件 / 目录也可拖到这里下载</div>
+          </div>
+          <div id="local-drop-overlay" class="drop-overlay">松开鼠标，保存到该目录</div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="statusbar" id="statusbar">就绪</div>
+  </section>
+
+</main>
+
+<input type="file" id="file-input" multiple hidden>
+<input type="file" id="import-input" accept=".json,application/json" hidden>
+
+<div id="modal-root"></div>
+<div id="toast-root" class="toast-root"></div>
+<div id="loading" class="loading-mask" hidden><div class="spinner"></div></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

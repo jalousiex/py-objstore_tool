@@ -1,0 +1,74 @@
+{
+  "version": "2.0.0",
+  "//": "objstore_tool 常用任务。Ctrl+Shift+B 直接跑默认任务（运行）；Ctrl+Shift+P → Run Task 可挑其它任务。",
+  "//index": "任务里不指定包源：uv 走本机用户级配置 %APPDATA%\\uv\\uv.toml（当前指向公网清华镜像）。临时换源就改那个文件，或在本窗口 set UV_INDEX_URL。",
+  "tasks": [
+    {
+      "label": "运行 objstore_tool",
+      "detail": "uv run objstore_tool —— 与双击 start.bat 等价，跑当前源码，改完代码重跑即生效",
+      "type": "shell",
+      "command": "uv",
+      "args": ["run", "objstore_tool"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "装到 PATH（uv tool install）",
+      "detail": "重新安装 objstore_tool 命令到 %USERPROFILE%\\.local\\bin，任意目录可用",
+      "type": "shell",
+      "command": "uv",
+      "args": ["tool", "install", "--force", "--python", "3.11", "."],
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "打包：目录版（默认）",
+      "detail": "产物 dist/objstore_tool/objstore_tool.exe，启动快",
+      "type": "shell",
+      "command": "uv",
+      "args": ["run", "--with", "pyinstaller", "python", "build.py"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "打包：单文件 exe",
+      "detail": "产物 dist/objstore_tool.exe，便于拷贝，但每次启动要解压到 %TEMP%",
+      "type": "shell",
+      "command": "uv",
+      "args": ["run", "--with", "pyinstaller", "python", "build.py", "--onefile"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "自测：S3 链路",
+      "detail": "起本地 mock 服务，25 项断言；配置写到 %TEMP%，不污染真实配置",
+      "type": "shell",
+      "command": "uv",
+      "args": ["run", "python", "tests/selftest.py"],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": { "OBJSTORE_CONFIG_DIR": "${env:TEMP}/objstore-selftest" }
+      },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "自测：WebHDFS 链路",
+      "detail": "起本地 mock 服务，24 项断言；配置写到 %TEMP%，不污染真实配置",
+      "type": "shell",
+      "command": "uv",
+      "args": ["run", "python", "tests/selftest_webhdfs.py"],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": { "OBJSTORE_CONFIG_DIR": "${env:TEMP}/objstore-selftest" }
+      },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    }
+  ]
+}
